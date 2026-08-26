@@ -75,8 +75,8 @@ def _request_legacy_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
     if not api_key.key or not api_key.secret:
         return api_key, False
     request_data = build_legacy_request_data(key=api_key.key, secret=api_key.secret)
-    try:
-        for _ in range(MAX_REQUEST_ATTEMPTS):
+    for _ in range(MAX_REQUEST_ATTEMPTS):
+        try:
             # Burst protection
             acquire_global_sync('legacy_bearer')
             with (bearer_limiter.ratelimit('legacy_bearer', delay=True),
@@ -89,8 +89,8 @@ def _request_legacy_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
                 return api_key, True
             elif not keep_trying:
                 break
-    except Exception:
-        auth_exception(f'Exception in refreshing legacy token, API key ID: {api_key.api_key_id}')
+        except Exception:
+            auth_exception(f'Exception in refreshing legacy token, API key ID: {api_key.api_key_id}')
     return api_key, False
 
 
