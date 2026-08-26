@@ -52,8 +52,8 @@ async def _request_oauth_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
 
     credentials = client_credentials_from_oauth_type(oauth_type=api_key.oauth_type)
     request_data = build_oauth_request_data(refresh_token=refresh_token, credentials=credentials)
-    try:
-        for _ in range(MAX_REQUEST_ATTEMPTS):
+    for _ in range(MAX_REQUEST_ATTEMPTS):
+        try:
             # Burst protection
             await acquire_global_async('oauth_bearer')
             async with (bearer_limiter.ratelimit('oauth_bearer', delay=True),
@@ -67,8 +67,8 @@ async def _request_oauth_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
                 return api_key, True
             elif not keep_trying:
                 break
-    except Exception:
-        auth_exception(f'Exception in refreshing OAuth token, API key ID: {api_key.api_key_id}')
+        except Exception:
+            auth_exception(f'Exception in refreshing OAuth token, API key ID: {api_key.api_key_id}')
     return api_key, False
 
 
