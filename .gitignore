@@ -1,0 +1,8 @@
+*.ini
+
+build
+dist
+.idea
+env
+*.egg-info
+*.pyc

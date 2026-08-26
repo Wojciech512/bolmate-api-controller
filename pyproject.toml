@@ -1,0 +1,20 @@
+[project]
+name = "bolmate_api_controller"
+version = "0.0.1"
+description = "Bolmate controller responsible for storing and refreshing API tokens"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [{ name = "Bolmate", email = "dave@bolmate.nl" }]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[project.optional-dependencies]
+dev = [
+    'build'
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
