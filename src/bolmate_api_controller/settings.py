@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file='config.ini')
+    model_config = SettingsConfigDict(env_file='config.ini', extra='allow')
 
     # Encryption
     bolmate_encrypt_secret: str
