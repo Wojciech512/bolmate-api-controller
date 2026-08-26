@@ -8,8 +8,10 @@ from dvrd_pydate import PyDateTime
 
 from bolmate_api_controller.aio_bol_ratelimit import acquire_global_sync, bearer_limiter
 from bolmate_api_controller.bolmate_encryption import enc_data
-from bolmate_api_controller.constants import MAX_REQUEST_ATTEMPTS, SELECT_QUERY, UPDATE_QUERY
+from bolmate_api_controller.constants import MAX_REQUEST_ATTEMPTS, SELECT_QUERY, UPDATE_QUERY, DEACTIVATE_QUERY, \
+    ACCOUNT_DEACTIVATED
 from bolmate_api_controller.database import sync_bolmate_connection
+from bolmate_api_controller.exceptions import APIKeyDeactivated
 from bolmate_api_controller.logger import auth_exception, auth_error
 from bolmate_api_controller.request_helper import client_credentials_from_oauth_type, build_oauth_request_data, \
     build_legacy_request_data
@@ -31,15 +33,19 @@ def get_api_key_sync(*, api_key_id: ID) -> tuple[APIKey | None, bool]:
         if not api_key.bearer_is_expired:
             return api_key, True
 
-        if api_key.use_oauth:
-            api_key, success = _request_oauth_api_key(api_key=api_key)
-        else:
-            api_key, success = _request_legacy_api_key(api_key=api_key)
-        if success:
-            database.execute(UPDATE_QUERY,
-                             {'api_bearer': enc_data.encrypt(plaintext=api_key.api_bearer),
-                              'bearer_expires_at': api_key.bearer_expires_at,
-                              'api_key_id': api_key.api_key_id})
+        try:
+            if api_key.use_oauth:
+                api_key, success = _request_oauth_api_key(api_key=api_key)
+            else:
+                api_key, success = _request_legacy_api_key(api_key=api_key)
+            if success:
+                database.execute(UPDATE_QUERY,
+                                 {'api_bearer': enc_data.encrypt(plaintext=api_key.api_bearer),
+                                  'bearer_expires_at': api_key.bearer_expires_at,
+                                  'api_key_id': api_key.api_key_id})
+        except APIKeyDeactivated:
+            success = False
+            database.execute(DEACTIVATE_QUERY, {'api_key_id': api_key.api_key_id})
         return api_key, success
 
 
@@ -66,6 +72,8 @@ def _request_oauth_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
                 return api_key, True
             elif not keep_trying:
                 break
+        except APIKeyDeactivated:
+            raise
         except Exception:
             auth_exception(f'Exception in refreshing OAuth token, API key ID: {api_key.api_key_id}')
             sleep(1 + random())
@@ -90,6 +98,8 @@ def _request_legacy_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
                 return api_key, True
             elif not keep_trying:
                 break
+        except APIKeyDeactivated:
+            raise
         except Exception:
             auth_exception(f'Exception in refreshing legacy token, API key ID: {api_key.api_key_id}')
             sleep(1 + random())
@@ -121,5 +131,8 @@ def _process_auth_response(*, api_key: APIKey, sync_response: SyncResponse,
     else:
         err = sync_response.text()
         auth_error(f'Error in refreshing {token_type} token: {err}, API key ID: {api_key.api_key_id}')
+        if ACCOUNT_DEACTIVATED in err.casefold():
+            # Confirmed to no longer be active without possibility to revive.
+            raise APIKeyDeactivated()
         # No reason to retry on non-recoverable errors
         return api_key, False, False

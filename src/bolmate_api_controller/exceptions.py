@@ -1,0 +1,2 @@
+class APIKeyDeactivated(Exception):
+    pass
