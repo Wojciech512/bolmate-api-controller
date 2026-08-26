@@ -68,6 +68,7 @@ def _request_oauth_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
                 break
         except Exception:
             auth_exception(f'Exception in refreshing OAuth token, API key ID: {api_key.api_key_id}')
+            sleep(1 + random())
     return api_key, False
 
 
@@ -91,6 +92,7 @@ def _request_legacy_api_key(*, api_key: APIKey) -> tuple[APIKey, bool]:
                 break
         except Exception:
             auth_exception(f'Exception in refreshing legacy token, API key ID: {api_key.api_key_id}')
+            sleep(1 + random())
     return api_key, False
 
 
