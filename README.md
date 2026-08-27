@@ -36,34 +36,73 @@ wheels apart and `pip install` will consider an already-installed copy up to dat
 ```python
 from bolmate_api_controller import get_api_key_async, get_api_key_sync
 
-api_key, success = await get_api_key_async(api_key_id=api_key_id)
-if not success:
-    ...  # no usable token, do not call the bol API
-headers = {'Authorization': f'Bearer {api_key.api_bearer}'}
+result = await get_api_key_async(api_key_id=api_key_id)
+if not result.success:
+    log.warning('No usable bol token: %s', result.error)
+    return  # do not call the bol API
+headers = {'Authorization': f'Bearer {result.api_key.api_bearer}'}
 ```
 
 The sync entry point is identical:
 
 ```python
-api_key, success = get_api_key_sync(api_key_id=api_key_id)
+result = get_api_key_sync(api_key_id=api_key_id)
 ```
 
-Both take `api_key_id` as a keyword-only argument (`str | UUID`) and return
-`tuple[APIKey | None, bool]`.
+Both take `api_key_id` as a keyword-only argument (`str | UUID`) and return a `Result`.
+
+### `Result`
+
+| Field | Notes |
+| --- | --- |
+| `success` | The only field that decides whether you have a usable token. |
+| `api_key` | The `APIKey`, or `None` when no row matched. Non-`None` whenever `success` is `True`, though the type is `APIKey \| None` — a type checker will still ask you to narrow it. |
+| `error` | `ErrorCode` explaining the failure. `None` on success. |
+| `exception` | The exception from the last attempt, when one was raised. `None` otherwise. |
+| `response_status` | HTTP status of the last response from bol, when a request was made. |
+| `response_text` | Body of the last *failing* response, for diagnostics. Always `None` on success — the token response body contains the bearer and is deliberately not retained. |
+| `retryable` | Internal to the retry loop. Always `False` on a `Result` you receive; do not branch on it. Use `error` instead. |
+| `is_json_response` | Property. Whether `response_text` looks like a JSON document. |
 
 ### Interpreting the return value
 
-| Result | Meaning |
+| `success` | `api_key` | Meaning |
+| --- | --- | --- |
+| `True` | `APIKey` | The bearer is valid and usable. |
+| `False` | `APIKey` | The key exists, but the refresh failed. `api_bearer` is stale or empty and **will be rejected by bol**. Do not use it. |
+| `False` | `None` | No API key with that id exists (`API_KEY_NOT_FOUND`). |
+
+The middle case is the one that is easy to get wrong: a non-`None` `api_key` is *not*
+by itself a signal that you have a working token. Always check `success`.
+
+A failed refresh is not retried behind your back, so the next call repeats the full attempt
+sequence. Nothing is written to the database except in the deactivation case below. See
+*Known limitations*.
+
+### `ErrorCode`
+
+Permanent — retrying the same call will fail the same way until something changes outside
+this library:
+
+| Code | Cause |
 | --- | --- |
-| `(None, False)` | No API key with that id exists. |
-| `(APIKey, False)` | The key exists, but the refresh failed. `api_bearer` is stale or empty and **will be rejected by bol**. Do not use it. |
-| `(APIKey, True)` | The bearer is valid and usable. |
+| `API_KEY_NOT_FOUND` | No `api_key` row with that id. |
+| `REFRESH_EXPIRED` | The OAuth refresh token is missing or past its expiry. The key must be re-authorised with bol. |
+| `MISSING_LEGACY_CREDENTIALS` | `use_oauth` is `False` but `key` or `secret` is empty. |
+| `API_KEY_DEACTIVATED` | Bol reports the account is no longer active, with no way to revive it. **This one has a side effect:** the row's `status` is set to `'error'` and its stored bearer and refresh credentials are cleared before the `Result` is returned. |
+| `UNEXPECTED_RESPONSE` | Bol returned a 4xx that means none of the above. Check `response_status` and `response_text`. |
+| `TOO_MANY_REQUESTS` | Bol returned 429 without a `Retry-After` header, so there is no indication of how long to wait. |
 
-The middle case is the one that is easy to get wrong: a non-`None` `APIKey` is *not*
-by itself a signal that you have a working token. Always check the boolean.
+Transient — worth retrying later, after a delay:
 
-A failed refresh is not retried behind your back and nothing is written to the database,
-so the next call repeats the full attempt sequence. See *Known limitations*.
+| Code | Cause |
+| --- | --- |
+| `MAX_ATTEMPTS` | Every attempt failed with a retryable error (5xx, or 429 with `Retry-After`). `response_status` and `response_text` carry the last one. |
+| `EXCEPTION_RAISED` | The last attempt raised — connection error, timeout, malformed response. `exception` holds it. |
+
+`SERVER_ERROR` exists on `ErrorCode` but never reaches a caller: a 5xx is retried inside
+the library, and exhausting the attempts surfaces as `MAX_ATTEMPTS` with the 5xx status
+still in `response_status`. The same is true of a 429 that carried a `Retry-After`.
 
 ### `APIKey`
 
@@ -138,8 +177,9 @@ committed.
 Reads and writes the `api_key` table, using columns `id`, `api_bearer`,
 `bearer_expires_at`, `oauth_refresh_token`, `oauth_refresh_token_expires_at`,
 `oauth_type`, `use_oauth`, `key`, `secret`. `api_bearer`, `oauth_refresh_token`, `key` and
-`secret` are stored encrypted and decrypted on read; only `api_bearer` and
-`bearer_expires_at` are written back.
+`secret` are stored encrypted and decrypted on read. A successful refresh writes back
+`api_bearer` and `bearer_expires_at` only. A key bol reports as deactivated is instead
+written with `status = 'error'` and its bearer and refresh columns cleared.
 
 The connecting role needs `SELECT` and `UPDATE` on `api_key`, and each call takes an
 isolated connection for the lifetime of the transaction.
@@ -155,15 +195,18 @@ isolated connection for the lifetime of the transaction.
 3. Otherwise refresh against `login.bol.com/token`, using the OAuth refresh-token flow or
    the legacy client-credentials flow depending on `use_oauth`.
 4. On success, write the encrypted bearer and its expiry, then commit and release the lock.
-   On failure, nothing is written.
+   On failure nothing is written, except when bol reports the key as deactivated: that row
+   is marked `status = 'error'` and its credentials cleared, so the next call short-circuits
+   instead of repeating a refresh that cannot succeed.
 
 Correctness depends on the transaction running at `READ COMMITTED` (the PostgreSQL
 default) so that step 2 observes the committed refresh.
 
 ## Known limitations
 
-- **No backoff on persistent failure.** A key with revoked or expired credentials repeats
-  the full five-attempt sequence on every call, holding the row lock throughout.
+- **No backoff on persistent failure.** A key that keeps hitting 5xx repeats the full
+  five-attempt sequence on every call, holding the row lock throughout. Errors bol reports
+  as final (`UNEXPECTED_RESPONSE`, `API_KEY_DEACTIVATED`) stop after the first attempt.
 - **Refresh tokens are not rotated.** Only the bearer and its expiry are written back. This
   is deliberate: bol does not rotate refresh tokens on the refresh grant.
 - **No lock timeout.** A slow refresh blocks every other caller of that key for its full

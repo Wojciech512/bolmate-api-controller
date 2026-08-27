@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal, cast
 from uuid import UUID
 
@@ -8,10 +9,22 @@ from dvrd_pydate import PyDateTime
 from bolmate_api_controller.bolmate_encryption import enc_data
 from bolmate_api_controller.constants import BEARER_REFRESH_MARGIN
 
-__all__ = ('ID', 'OAuthType', 'APIKey', 'OAuthClientCredentials', 'AuthRequestData')
+__all__ = ('ID', 'OAuthType', 'APIKey', 'OAuthClientCredentials', 'AuthRequestData', 'Result', 'ErrorCode')
 
 type ID = str | UUID
 type OAuthType = Literal['INVOICES', 'DATA_INSIGHTS']
+
+
+class ErrorCode(StrEnum):
+    REFRESH_EXPIRED = 'Refresh token expired'
+    API_KEY_NOT_FOUND = 'API key not found in the database'
+    API_KEY_DEACTIVATED = 'API key is deactivated'
+    MISSING_LEGACY_CREDENTIALS = 'Missing legacy credentials'
+    EXCEPTION_RAISED = 'Exception raised'
+    MAX_ATTEMPTS = 'Max attempts reached'
+    TOO_MANY_REQUESTS = 'Too many requests'
+    SERVER_ERROR = 'Server error'
+    UNEXPECTED_RESPONSE = 'Unexpected response'
 
 
 @dataclass
@@ -69,3 +82,25 @@ class AuthRequestData:
     data: dict
     headers: dict
     timeout: int
+
+
+@dataclass
+class Result:
+    api_key: APIKey | None
+    success: bool
+    exception: Exception | None = None
+    error: ErrorCode | None = None
+    response_status: int | None = None
+    response_text: str | None = None
+    retryable: bool = False
+
+    @property
+    def is_json_response(self) -> bool:
+        text = self.response_text.strip() if self.response_text else ''
+        if not text:
+            return False
+        if text.startswith('{'):
+            return text.endswith('}')
+        elif text.startswith('['):
+            return text.endswith(']')
+        return False

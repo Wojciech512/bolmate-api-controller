@@ -35,7 +35,7 @@ class SyncResponse:
         if response is None:
             return None
         return SyncResponse(status=response.status_code, text=response.text, headers=cast(dict, response.headers),
-                             url=response.url)
+                            url=response.url)
 
     def __init__(self, *, status: int, text: str, headers: dict, url: str):
         self.status = status
