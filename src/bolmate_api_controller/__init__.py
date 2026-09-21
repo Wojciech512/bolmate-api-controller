@@ -1,4 +1,5 @@
 from bolmate_api_controller.controllers.async_controller import get_api_key_async
 from bolmate_api_controller.controllers.sync_controller import get_api_key_sync
 from bolmate_api_controller.constants import BEARER_REFRESH_MARGIN
+from bolmate_api_controller.database import configure_database, credentials_from_dsn
 from bolmate_api_controller.types import *

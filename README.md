@@ -172,6 +172,23 @@ bolmate_database_port=
 Settings are cached after first load. `config.ini` is gitignored and must never be
 committed.
 
+### Explicit database configuration
+
+Services that do not carry the controller's `config.ini` (the Bluemate MCP server keeps its
+own configuration format) can set the database connection explicitly at startup instead:
+
+```python
+from bolmate_api_controller import configure_database
+
+configure_database(dsn='postgresql://user:password@host:5432/bolmate')
+```
+
+`configure_database` accepts either a `dsn` or a prebuilt pg-orm `Credentials` object
+(`credentials=`), takes precedence over the `bolmate_database_*` settings for every
+subsequent `get_api_key_*` call in the process, and reverts to the settings when called
+with no arguments. The remaining settings (encryption, bol OAuth clients) are still read
+from `config.ini` or, like any `pydantic-settings` field, from environment variables.
+
 ### Database
 
 Reads and writes the `api_key` table, using columns `id`, `api_bearer`,

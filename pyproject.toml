@@ -12,7 +12,8 @@ dependencies = { file = ["requirements.txt"] }
 
 [project.optional-dependencies]
 dev = [
-    'build'
+    'build',
+    'pytest'
 ]
 
 [build-system]
