@@ -51,6 +51,24 @@ result = get_api_key_sync(api_key_id=api_key_id)
 
 Both take `api_key_id` as a keyword-only argument (`str | UUID`) and return a `Result`.
 
+### `decrypt`
+
+Values encrypted with the Bolmate field cipher can be decrypted with explicit key material,
+without any `config.ini`:
+
+```python
+from bolmate_api_controller import DecryptionError, decrypt
+
+try:
+    plaintext = decrypt(encrypted_text=ciphertext, secret=..., encryption_value=..., iterations=...)
+except DecryptionError:
+    ...  # bad input or wrong key material - never silently returns the ciphertext
+```
+
+The key material mirrors the three `bolmate_encrypt*` configuration keys below. Unlike the
+internal legacy path, `decrypt` validates the padding after decryption, so a wrong secret
+raises instead of yielding garbage bytes.
+
 ### `Result`
 
 | Field | Notes |

@@ -8,9 +8,17 @@ from Crypto.Cipher import AES
 from bolmate_api_controller.settings import get_settings
 
 
+class DecryptionError(Exception):
+    pass
+
+
 class EncryptData:
-    def __init__(self):
+    def __init__(self, *, secret: str | None = None, encryption_value: str | None = None,
+                 iterations: int | None = None):
         self.logger = logging.getLogger(EncryptData.__name__)
+        self._secret = secret
+        self._encryption_value = encryption_value
+        self._iterations = iterations
 
     def encrypt(self, *, plaintext: str):
         try:
@@ -52,11 +60,41 @@ class EncryptData:
         except Exception:
             return orig_cipher
 
+    def decrypt_strict(self, *, encrypted_text: str) -> str:
+        if not encrypted_text:
+            raise DecryptionError('No encrypted text given')
+        try:
+            raw = binascii.unhexlify(encrypted_text.strip().encode())
+        except binascii.Error as exc:
+            raise DecryptionError('Encrypted text is not valid hex') from exc
+        if len(raw) < 32 or len(raw) % 16 != 0:
+            raise DecryptionError('Encrypted text has an invalid length')
+        salt = raw[:16]
+        ciphertext_sans_salt = raw[16:]
+        key = self._generate_key(salt)
+        cipher = AES.new(key, AES.MODE_ECB)
+        padded_plaintext = cipher.decrypt(ciphertext_sans_salt)
+        padding_size = padded_plaintext[-1]
+        if not 1 <= padding_size <= 16 or len(padded_plaintext) < padding_size:
+            raise DecryptionError('Decryption produced invalid padding (wrong key material?)')
+        padding = padded_plaintext[-padding_size:]
+        if any(byte != padding[0] for byte in padding):
+            raise DecryptionError('Decryption produced invalid padding (wrong key material?)')
+        return self._decode(padded_plaintext[:-padding_size])
+
     def _generate_key(self, salt: bytes):
-        settings = get_settings()
-        key = settings.bolmate_encryption_value.encode('utf-8') + salt
-        secret = settings.bolmate_encrypt_secret.encode('utf-8')
-        for i in range(settings.bolmate_encryption_iterations):
+        if self._secret is not None and self._encryption_value is not None and self._iterations is not None:
+            encryption_value = self._encryption_value
+            secret_value = self._secret
+            iterations = self._iterations
+        else:
+            settings = get_settings()
+            encryption_value = settings.bolmate_encryption_value
+            secret_value = settings.bolmate_encrypt_secret
+            iterations = settings.bolmate_encryption_iterations
+        key = encryption_value.encode('utf-8') + salt
+        secret = secret_value.encode('utf-8')
+        for i in range(iterations):
             key = hashlib.sha256(key + secret).digest()
         return key
 
@@ -83,6 +121,11 @@ class EncryptData:
             return encoded.decode('utf-8')
         except UnicodeDecodeError:
             return encoded.decode('latin-1')
+
+
+def decrypt(*, encrypted_text: str, secret: str, encryption_value: str, iterations: int) -> str:
+    encryptor = EncryptData(secret=secret, encryption_value=encryption_value, iterations=iterations)
+    return encryptor.decrypt_strict(encrypted_text=encrypted_text)
 
 
 enc_data = EncryptData()
